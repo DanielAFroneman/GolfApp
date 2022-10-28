@@ -1,4 +1,5 @@
 import numpy as np
+from multiprocessing import Pool
 from quart import Quaternion
 
 def chartEtoQ(e) -> Quaternion:
@@ -35,30 +36,59 @@ def EtoR(e):
     return np.matmul(np.matmul(yaw, pitch), roll)
 
 class QCompFilter:
-    def __init__(self, aRef, qinit: Quaternion, accelRatio: float, debugFlag: bool) -> None:
+    def __init__(self, aRef, accelRatio: float, accelDistro: float, debugFlag: bool) -> None:
         self.accelRatio = accelRatio
+        self.accelDistro = accelDistro
         
-        self.aRef = np.array(aRef)
-        self.q = [qinit]
+#        self.aRef = np.array(aRef)
+        self.aRef = np.array([aRef[1], aRef[2], [-aRef[0][0]]])
 
         self.debugFlag = debugFlag
 
         if (self.debugFlag):
             print(f'aRef:\n{self.aRef}')
-            print(f'q: {self.q[0]}')
 
-    def applyData(self, df):
-        for i in range(0, len(df)-1):
+    def getQInit(self, firstAccel):
+        a_mag = np.sqrt(sum([i[0]**2 for i in firstAccel]))
+        ak_norm = firstAccel/a_mag
+
+        a_angle = np.arccos(sum([a*b for a,b in zip(self.aRef, ak_norm)])[0])
+        a_axis = np.cross(self.aRef.T, ak_norm.T)[0]
+
+        qTemp = chartEtoQ(chartQtoE(Quaternion(np.cos(a_angle/2), [i*np.sin(a_angle/2) for i in a_axis])))
+        self.q = [qTemp]
+
+    def batchApply(self, timeLists, accelLists, gyroLists):
+        with Pool() as pool:
+            poolArgs = [(timeLists[i], accelLists[i], gyroLists[i]) for i in range(len(timeLists))]
+            swingRotations = pool.starmap(self.applyData, poolArgs)
+
+        return swingRotations
+
+    def applyData(self, timeList, accelList, gyroList):
+        ak_0 = np.array([[accelList[1][0]],
+                         [accelList[2][0]],
+                         [-accelList[0][0]]])
+        self.getQInit(ak_0)
+
+        for i in range(0, len(timeList)-1):
             q_previous = self.q[-1]
-            dt = (df.iloc[i+1]["timestamp"] - df.iloc[i]["timestamp"]) * 0.122*10**-3
+            dt = (timeList[i+1] - timeList[i])
 
-            wk = np.array([[df.iloc[i+1]["gyroX"] * np.pi/180],
-                           [df.iloc[i+1]["gyroY"] * np.pi/180],
-                           [df.iloc[i+1]["gyroZ"] * np.pi/180]])
+            #############################################
+            ##             LOCAL -> WORLD              ##
+            ##                 X -> -Z                 ##
+            ##                 Y -> X                  ##
+            ##                 Z -> Y                  ##
+            #############################################
 
-            ak = np.array([[df.iloc[i+1]["accelX"]],
-                           [df.iloc[i+1]["accelY"]],
-                           [df.iloc[i+1]["accelZ"]]])
+            wk = np.array([[gyroList[1][i+1] * np.pi/180],
+                           [gyroList[2][i+1] * np.pi/180],
+                           [-gyroList[0][i+1] * np.pi/180]])
+
+            ak = np.array([[accelList[1][i+1]],
+                           [accelList[2][i+1]],
+                           [-accelList[0][i+1]]])
 
             w_mag = np.sqrt(sum([i[0]**2 for i in wk]))
             w_angle = w_mag*dt/2
@@ -73,13 +103,15 @@ class QCompFilter:
             a_mag = np.sqrt(sum([i[0]**2 for i in ak]))
             ak_norm = ak/a_mag
 
-
             a_angle = np.arccos(sum([a*b for a,b in zip(self.aRef, ak_norm)])[0])
             a_axis = np.cross(self.aRef.T, ak_norm.T)[0]
 
             a_q = Quaternion(np.cos(a_angle/2), [i*np.sin(a_angle/2) for i in a_axis])
 
-            adjusted_q = (1-self.accelRatio) * w_q + self.accelRatio * a_q
+            accelList[3]
+
+            accelProportion = self.accelRatio*np.exp(-0.5*((accelList[3][i+1]-1)/self.accelDistro)**2)
+            adjusted_q = (1-accelProportion) * w_q + accelProportion * a_q
 
             self.q.append(chartEtoQ(chartQtoE(adjusted_q)))
 

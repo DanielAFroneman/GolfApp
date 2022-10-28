@@ -6,7 +6,7 @@ block_cipher = None
 a = Analysis(['main.py'],
              pathex=['C:\\Users\\Dafro\\Documents\\Work\\GolfApp'],
              binaries=[],
-             datas=[('mainwindow.ui', '.'), ('displaywindow.ui', '.'), ('demo.mtl', '.'), ('demo.obj', '.')],
+             datas=[('mainwindow.ui', '.'), ('axis.mtl', '.'), ('axis.obj', '.'), ('loading.png', '.')],
              hiddenimports=[],
              hookspath=[],
              runtime_hooks=[],
@@ -26,7 +26,7 @@ exe = EXE(pyz,
           bootloader_ignore_signals=False,
           strip=False,
           upx=True,
-          console=False )
+          console=True )
 coll = COLLECT(exe,
                a.binaries,
                a.zipfiles,
